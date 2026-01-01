@@ -78,4 +78,4 @@ comparison = compare_reports([report_plan_a, report_plan_b])
 We welcome contributions for:
 - **New Blueprints:** Manifest new zoning designations from novel data sources.
 - **New Proxies:** Verify impacts using regional or industry-specific benchmarks.  
-_Read more in datalab 👉 [CONTRIBUTING.md](https://github.com/zoning-for-zero-foundation/datalab/CONTRIBUTING.md)_
+_Read more in datalab 👉 [CONTRIBUTE.md](https://github.com/zoning-for-zero-foundation/datalab/CONTRIBUTE.md)_
