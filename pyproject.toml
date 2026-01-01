@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zzproxies"
+version = "0.9.0"
+description = "Transdisciplinary Discovery-to-Verification Engine for Climate Friendly Urban Planning."
+readme = "README.md"
+authors = [
+    { name = "zzproxies contributors" }
+]
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+# Core remains strictly lightweight
+dependencies = [
+    "typing-extensions>=4.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+# Required for Blueprint data fetching
+data = [
+    "duckdb>=1.4.0",
+    "pyarrow>=18.0.0",
+    "shapely>=2.0.6",
+    "requests>=2.32.0"
+]
+# Required for Datalab and high-level Policy Reporting
+science = [
+    "pandas>=2.0.0",
+    "geopandas>=1.0.0",
+    "momepy>=0.11.0",
+    "matplotlib>=3.8.0",
+]
+viz = [
+    "mapclassify>=2.10.0",
+    "plotly>=6.5.0",
+    "pydeck>=0.9.1",
+    "lonboard>=0.13.0",
+    "palettable==3.3.3"
+]
+
+[project.scripts]
+zzproxies = "zzproxies.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zzproxies"]
