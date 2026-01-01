@@ -51,8 +51,12 @@ def supply_gwp_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     Inputs: UPD schema (GFA, building_type).
     """
     for record in data:
-        gfa = record.get("GFA", 0)
-        b_type = record.get("building_type", "apartment-condo")
+        # 1. Force GFA to float and handle 'null' or None
+        raw_gfa = record.get("GFA")
+        gfa = float(raw_gfa) if (raw_gfa is not None and str(raw_gfa).lower() != "null") else 0.0
+        # 2. Handle building type 'null' or None
+        raw_type = record.get("building_type")
+        b_type = str(raw_type) if (raw_type is not None and str(raw_type).lower() != "null") else "other"
         
         factor = GWP_BENCHMARKS["SUPPLY_SIDE"].get(b_type, 700.0)
         gwp_t = round((gfa * factor) / 1000, -1)
@@ -95,11 +99,23 @@ def supply_gwp_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 )
 def activity_pcf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Simplified: No longer needs Industry Keyword Mapping.
-    The Blueprint already provided NFA_by_amenity with correct categories.
+    The Blueprint data must provide NFA_by_industry with correct categories.
     """
     for record in data:
-        nfas = record.get("NFA_by_amenity", {})
+        # CHECK NFA Dictionary: Ensure it is a valid dict and not a 'null' string
+        raw_nfa = record.get("NFA_by_industry")
+        if isinstance(raw_nfa, dict):
+            nfas = raw_nfa
+        elif isinstance(raw_nfa, str) and raw_nfa.lower() != "null":
+            # Handle cases where dict might be a JSON string
+            import json
+            try:
+                nfas = json.loads(raw_nfa)
+            except:
+                nfas = {}
+        else:
+            nfas = {}
+
         total_pcf_kg = 0.0
         
         # Mapping categories directly to Activity Benchmarks
@@ -109,9 +125,9 @@ def activity_pcf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             
         pcf_t = round(total_pcf_kg / 1000, -1)
         
-        if pcf_t > 100:
+        if pcf_t > 500:
             gwpl = "L4: Critically High Consumer Activity Intensity"
-        elif pcf_t > 50:
+        elif pcf_t > 100:
             gwpl = "L3: High Consumer Activity Intensity"
         elif pcf_t > 20:
             gwpl = "L2: Moderate Consumer Activity Intensity"
@@ -146,7 +162,7 @@ def activity_pcf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 )
 def slf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Dynamically maps GWPL based on consumption intensity (NFA) 
+    Dynamically maps GWPL based on consumption intensity of NFA_by_industry 
     and morphological archetype.
     """
     # 1. Configuration: Morphological Base Multipliers
@@ -168,9 +184,25 @@ def slf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
     for record in data:
-        gfa = record.get("GFA", 0)
-        b_type = record.get("building_type", "default")
-        nfa_dist = record.get("NFA_by_amenity", {})
+        # 1. Force GFA to float and handle 'null' or None
+        raw_gfa = record.get("GFA")
+        gfa = float(raw_gfa) if (raw_gfa is not None and str(raw_gfa).lower() != "null") else 0.0
+        # 2. Handle building type 'null' or None
+        raw_type = record.get("building_type")
+        b_type = str(raw_type) if (raw_type is not None and str(raw_type).lower() != "null") else "other"
+        # 3. CHECK NFA Dictionary: Ensure it is a valid dict and not a 'null' string
+        raw_nfa = record.get("NFA_by_industry")
+        if isinstance(raw_nfa, dict):
+            nfa_dist = raw_nfa
+        elif isinstance(raw_nfa, str) and raw_nfa.lower() != "null":
+            # Handle cases where dict might be a JSON string
+            import json
+            try:
+                nfa_dist = json.loads(raw_nfa)
+            except:
+                nfa_dist = {}
+        else:
+            nfa_dist = {}
         
         # Extract Consumption Intensity
         retail_food_nfa = nfa_dist.get("Retail & Food", 0.0)

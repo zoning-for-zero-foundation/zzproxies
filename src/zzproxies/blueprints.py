@@ -248,7 +248,7 @@ class OvertureMapBuildingsWithPlaces_vDEC2025:
             "building_type": derived_type,
             "num_floors": num_floors,
             "GFA": round(gfa, -1),
-            "NFA_by_amenity": nfa_dist,
+            "NFA_by_industry": nfa_dist,
             "wkt": record.get("wkt")
         }
 

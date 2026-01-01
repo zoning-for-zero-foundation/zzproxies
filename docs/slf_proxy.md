@@ -1,15 +1,31 @@
-# Lifestyle Carbon: Pace of Life (SLF) (GWPL)
+# Lifestyle Carbon
 
 This is the most advanced proxy in the package, bridging urban morphology with human consumption behavior. It identifies the "Rebound Effect" where dense urban environments accelerate the pace of consumption.
 
 ### Methodology
-The calculation is based on the **Situate Lifestyle Footprint (SLF) theory**, utilizing a dynamic interaction model. It assumes that a building's **Morphological Archetype** sets a baseline consumption pace, which is then accelerated or decelerated by the **Kinetic Intensity** of nearby consumer amenities (Retail & Food and Leisure travel).
+The calculation is based on the **Situate Lifestyle Footprint (SLF) theory**, utilizing a dynamic interaction model. It assumes that a building's **Morphological Archetype** sets a baseline consumption pace, which is then accelerated or decelerated by the **Kinetic Intensity** of nearby consumer amenities (Retail & Food and Leisure travel). The proxy uses the `pace_factor` to adjust the baseline 2.5t CO2e per capita according to the manifested spatial reality defined by urban built density and consumer amenities.
 
+### Blueprint schema
+The blueprint requires that each building has building type and Gross Floor Area (GFA) as well as distribution of Net Floor Area (NFA) by industry category defined as dict. The proxy applies the operational intensity on those industries, transforming economic activity into quantified Global Warming Potential Level (GWPL).
 
-### Epistemological Bridge
-- **Normative Intent:** Zoning for "15-minute cities."
-- **Empirical Reality:** High density + High accessibility = High-velocity consumption.
-- **Verification:** This proxy uses the `pace_factor` to adjust the baseline 2.5t CO2e per capita (2025 targets) according to the manifested spatial reality.
+```python
+# Example of required fields in the schema of the input data:
+{
+    "building_type": "apartment-condo", # string , one of:
+    #["apartment-condo","multi-family-house","one-family-house","commercial","public","industrial"]
+    "GFA": 7500.0, # float
+    "NFA_by_industry": { # dict
+                "Retail & Food": 400,
+                "Accommodation": 0,
+                "Health & Education": 0,
+                "Leisure & Culture": 1300,
+                "Industry & Services": 0,
+                "Transport": 0,
+                "Other": 5400
+                } 
+}
+
+```
 
 ### Dynamic GWPL Interaction (Interaction Matrix)
 The GWPL is determined dynamically by the **Retail & Food NFA** count:
