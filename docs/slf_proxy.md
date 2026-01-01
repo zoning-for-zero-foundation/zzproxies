@@ -3,7 +3,7 @@
 This is the most advanced proxy in the package, bridging urban morphology with human consumption behavior. It identifies the "Rebound Effect" where dense urban environments accelerate the pace of consumption.
 
 ### Methodology
-The calculation is based on the **Situate Lifestyle Footprint (SLF) theory**, utilizing a dynamic interaction model. It assumes that a building's **Morphological Archetype** sets a baseline consumption pace, which is then accelerated or decelerated by the **Kinetic Intensity** of nearby consumer amenities (Retail & Food and Leisure travel). The proxy uses the `pace_factor` to adjust the baseline 2.5t CO2e per capita according to the manifested spatial reality defined by urban built density and consumer amenities.
+The calculation is based on the **Situated Lifestyle Carbon Footprint (SLCF) theory**, utilizing a dynamic interaction model. It assumes that a building's **Morphological Archetype** sets a baseline consumption pace, which is then accelerated or decelerated by the **Kinetic Intensity** of nearby consumer amenities (Retail & Food) and Leisure travel. The proxy uses the `pace_factor` to adjust the baseline 2.5t CO2e per capita according to the manifested spatial reality defined by urban plans.
 
 ### Blueprint schema
 The blueprint requires that each building has building type and Gross Floor Area (GFA) as well as distribution of Net Floor Area (NFA) by industry category defined as dict. The proxy applies the operational intensity on those industries, transforming economic activity into quantified Global Warming Potential Level (GWPL).

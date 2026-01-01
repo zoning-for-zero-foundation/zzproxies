@@ -1,8 +1,8 @@
 # zzproxies
 
-**The Epistemological Bridge for Urban Climate Policy.**
+**The Epistemological Bridge between Urban Planning and Climate Impact Research.**
 
-`zzproxies` is a high-performance Python engine that bridges the gap between **Normative Urban Planning** (policy intent) and **Spatial Ground Truth** (empirical reality). It provides a unified, modular pipeline for discovering, developing, and modelling the climate impacts of urban plans.
+`zzproxies` is a Python engine that bridges the gap between Normative **Urban Planning** (policy intent) and the latest research on **Climate Impacts** of land-use (empirical reality). It provides a unified, modular pipeline for discovering, developing, and modelling the climate impacts of urban plans.
 
 
 ---
