@@ -39,6 +39,7 @@ The GWPL is determined dynamically by the **Retail & Food NFA** count:
 | **L0** | < 100 m² | **Low Impact**: Accessible residential zones. |
 
 
-### Citations
-- SSRN 5290807: "Impact of Land-Use Planning on Lifestyle Carbon Footprints."
-- IPCC AR6 Chapter 5: "Demand, services and social aspects of mitigation."
+### References
+- [Zoning for Zero](https://urn.fi/URN:ISBN:978-952-64-3184-0)
+- [Situated lifestyles: II.](http://dx.doi.org/10.1088/1748-9326/8/3/035050)
+- [IPCC AR6](https://www.ipcc.ch/report/ar6/wg1/chapter/chapter-5/)
