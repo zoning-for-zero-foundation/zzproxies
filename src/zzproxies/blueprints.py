@@ -5,8 +5,8 @@ Class functions to generate UPD blueprints from public data sources for defined 
 Each blueprint class should have:
 - __init__(self, bbox, country_code): to set up the bounding box and country code
 - run(self): to execute the data fetching and processing, returning UPD-formatted data
-- naming convention: Name of Blueprint indicating source followed by version as MONTHYEAR
-  (e.g., OverturemapBuildingsWithPlaces_vDEC2025)
+- naming convention: Name of Blueprint indicating source
+  (e.g., OverturemapBuildingsWithPlaces)
 - Class-related special library imports should be included within the particular function in the class
   (to be imported only when the function is called) but generally avoid this.
 """
@@ -14,10 +14,11 @@ Each blueprint class should have:
 #general imports for blueprints to share
 import duckdb #we encourage duckdb for in-memory spatial queries
 from typing import List, Dict, Any, Optional
+import requests
 
 
 # ----- Blueprint using OvertureMap Foundation (OMF) buildings and places -----
-class OvertureMapBuildingsWithPlaces_vDEC2025:
+class OvertureMapBuildingsWithPlaces:
     """
     Research Design: Building level UPD derived from OvertureMap Foundation: https://docs.overturemaps.org 
     Self-contained helpers for OvertureMap Foundation URL-sources and spatial joins.
@@ -26,7 +27,7 @@ class OvertureMapBuildingsWithPlaces_vDEC2025:
     def __init__(self, bbox, country_code):
         self.bbox = bbox
         self.country_code = country_code
-        self.release = "2025-12-17.0"  #https://docs.overturemaps.org/release-calendar/
+        self.release = self._get_latest_release()  # https://docs.overturemaps.org/release-calendar/
         self.con = duckdb.connect(':memory:')
         self.con.execute("INSTALL spatial; LOAD spatial; INSTALL httpfs; LOAD httpfs;")
 
@@ -46,12 +47,21 @@ class OvertureMapBuildingsWithPlaces_vDEC2025:
                 "Retail & Food": 1.4,
                 "Accommodation": 2.5,
                 "Health & Education": 1.2,
-                "Leisure & Culture": 1.2,
+                "Leisure & Culture": 1.4,
                 "Industry & Services": 2.2,
                 "Transport": 0.4,
                 "Other": 1.0
             }
 
+    def _get_latest_release(self):
+        url = "https://stac.overturemaps.org/catalog.json"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        latest = data.get("latest")
+        if not latest:
+            raise RuntimeError("Could not resolve latest Overture release")
+        return latest
 
     def _fetch_from_OMF(self, bbox: List[float]):
         xmin, ymin, xmax, ymax = bbox
@@ -105,7 +115,7 @@ class OvertureMapBuildingsWithPlaces_vDEC2025:
             ),
             pts_raw AS (
                 SELECT 
-                    COALESCE(categories, 'other') as category,
+                    COALESCE(basic_category, 'other') as category,
                     {geom_expr} AS geom,
                     -- We get the building ID that has the LARGEST area for this point
                     -- This prevents double-counting amenities across overlapping polygons
