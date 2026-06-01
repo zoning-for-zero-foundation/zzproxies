@@ -1,7 +1,7 @@
 """
 src/zzproxies/models.py
 Verification Models: Impact calculation for Impact-Verified Zoning.
-Linked to OvertureMapBuildingsWithPlaces_vDEC2025 blueprint.
+Linked to OvertureMapBuildingsWithPlaces blueprint.
 """
 
 from .core import registry, ProxyStatus, CoverageLimit, REGIONS
@@ -32,12 +32,12 @@ GWP_BENCHMARKS = {
 
 @registry.register(
     name="upfront_gwp_supply",
-    required_blueprint="OvertureMapBuildingsWithPlaces_vDEC2025",
+    required_blueprint="OvertureMapBuildingsWithPlaces",
     status=ProxyStatus(
         name="Supply-Side Embodied GWP",
         version="1.0.0",
         state="production",
-        description="Calculates upfront CO2e from building materials (A1-A3).",
+        description="Calculates upfront CO2e from estimated building materials (A1-A3).",
         coverage=CoverageLimit(
             allowed_regions=REGIONS["EU"],
             data_source="Overture Buildings",
@@ -143,11 +143,11 @@ def activity_pcf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return data
 
 
-# --- 3. Lifestyle Carbon (POL) ---
+# --- 3. Lifestyle Carbon (experimental) ---
 
 @registry.register(
     name="slf_proxy",
-    required_blueprint="OvertureMapBuildingsWithPlaces_vDEC2025",
+    required_blueprint="OvertureMapBuildingsWithPlaces",
     status=ProxyStatus(
         name="Situated Lifestyle Footprint",
         version="0.9.0",
