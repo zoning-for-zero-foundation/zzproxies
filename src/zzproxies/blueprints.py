@@ -12,7 +12,10 @@ Each blueprint class should have:
 """
 
 #general imports for blueprints to share
-import duckdb #we encourage duckdb for in-memory spatial queries
+try:
+    import duckdb #we encourage duckdb for in-memory spatial queries
+except ModuleNotFoundError:
+    duckdb = None
 from typing import List, Dict, Any, Optional
 import requests
 
@@ -20,11 +23,15 @@ import requests
 # ----- Blueprint using OvertureMap Foundation (OMF) buildings and places -----
 class OvertureMapBuildingsWithPlaces:
     """
-    Research Design: Building level UPD derived from OvertureMap Foundation: https://docs.overturemaps.org 
+    Research Design: Building level UPD derived from OvertureMap Foundation: https://docs.overturemaps.org
     Self-contained helpers for OvertureMap Foundation URL-sources and spatial joins.
     """
 
     def __init__(self, bbox, country_code):
+        if duckdb is None:
+            raise ModuleNotFoundError(
+                "duckdb is required for OvertureMapBuildingsWithPlaces. Install zzproxies[data]."
+            )
         self.bbox = bbox
         self.country_code = country_code
         self.release = self._get_latest_release()  # https://docs.overturemaps.org/release-calendar/
@@ -65,20 +72,20 @@ class OvertureMapBuildingsWithPlaces:
 
     def _fetch_from_OMF(self, bbox: List[float]):
         xmin, ymin, xmax, ymax = bbox
-        
+
         geom_expr = """
-            CASE 
-                WHEN regexp_matches(geometry::TEXT, '^(POLYGON|MULTIPOLYGON|POINT|LINESTRING).*') 
+            CASE
+                WHEN regexp_matches(geometry::TEXT, '^(POLYGON|MULTIPOLYGON|POINT|LINESTRING).*')
                     THEN ST_GeomFromText(geometry::TEXT)
-                WHEN geometry::TEXT LIKE '{%"coordinates"%}' 
+                WHEN geometry::TEXT LIKE '{%"coordinates"%}'
                     THEN ST_GeomFromGeoJSON(geometry::TEXT)
-                ELSE ST_GeomFromText('GEOMETRYCOLLECTION EMPTY') 
+                ELSE ST_GeomFromText('GEOMETRYCOLLECTION EMPTY')
             END
         """
 
         query = f"""
             WITH bld_base AS (
-                SELECT 
+                SELECT
                     id, subtype, class, num_floors, {geom_expr} as geom,
                     ST_Area_Spheroid({geom_expr}) as area
                 FROM read_parquet('s3://overturemaps-us-west-2/release/{self.release}/theme=buildings/type=building/*')
@@ -114,7 +121,7 @@ class OvertureMapBuildingsWithPlaces:
                 CROSS JOIN global_floor_mode gfm
             ),
             pts_raw AS (
-                SELECT 
+                SELECT
                     COALESCE(basic_category, 'other') as category,
                     {geom_expr} AS geom,
                     -- We get the building ID that has the LARGEST area for this point
@@ -126,7 +133,7 @@ class OvertureMapBuildingsWithPlaces:
                 AND p.bbox.ymin > {ymin} AND p.bbox.ymax < {ymax}
                 QUALIFY ROW_NUMBER() OVER(PARTITION BY p.geometry ORDER BY b.area DESC) = 1
             )
-            SELECT 
+            SELECT
                 bi.id, bi.subtype, bi.class, bi.num_floors,
                 ST_Area_Spheroid(bi.geom) as footprint_area_sqm,
                 (ST_Area_Spheroid(bi.geom) * COALESCE(bi.num_floors, 1)) as GFA,
@@ -154,9 +161,9 @@ class OvertureMapBuildingsWithPlaces:
             nfa_dist[primary_use] = 0.0
 
         weighted_items = []
-        
+
         # 3. DYNAMIC WEIGHTING: Scale primary use by floor count
-        # Base weight (2.0) multiplied by floors ensures the 'body' of the building 
+        # Base weight (2.0) multiplied by floors ensures the 'body' of the building
         # dominates the NFA in high-rises.
         floors = max(float(num_floors or 1.0), 1.0)
         primary_weight = 2.0 * floors
@@ -167,12 +174,12 @@ class OvertureMapBuildingsWithPlaces:
             for raw_cat in amenity_list:
                 raw_cat_str = str(raw_cat).lower()
                 matched_cat = None
-                
+
                 for main_cat, keywords in self.INDUSTRY_MAP.items():
                     if any(k in raw_cat_str for k in keywords):
                         matched_cat = main_cat
                         break
-                
+
                 target_cat = matched_cat if matched_cat else primary_use
                 weight = self.WEIGHT_MAP.get(target_cat, 1.0)
                 weighted_items.append({"cat": target_cat, "weight": weight})
@@ -205,14 +212,14 @@ class OvertureMapBuildingsWithPlaces:
         Refines raw building data into Urban Planning metrics.
         Includes GFA calculation and weighted NFA distribution for amenities.
         """
-        
+
         # 1. Configuration for Filtering
         DROP_SUBTYPES = {'outbuilding', 'service', 'transportation'}
         DROP_CLASSES = {'garage', 'garages', 'parking', 'carport', 'roof'}
-        
+
         b_class = str(record.get("class", "")).lower()
         b_subtype = str(record.get("subtype", "")).lower()
-        
+
         if b_subtype in DROP_SUBTYPES or b_class in DROP_CLASSES:
             return None
 
@@ -251,7 +258,7 @@ class OvertureMapBuildingsWithPlaces:
                                                   total_nfa=total_nfa,
                                                   num_floors=num_floors
                                                   )
-        
+
         # 5. Final UPD Output
         return {
             "id": record.get("id"),
@@ -274,7 +281,208 @@ class OvertureMapBuildingsWithPlaces:
             converted = self._reclassify_to_upd(r)
             if converted:
                 refined_data.append(converted)
-                
+
+        return refined_data
+
+
+# ----- Landcover Blueprint using OvertureMap Foundation (OMF) landuse & buildings -----
+class OvertureMapLandcoverForBiodiversity:
+    """
+    Research Design: General landcover blueprint derived from OvertureMap Foundation.
+    Utilizes a fast centroid-based spatial join to subtract building footprints from
+    land-use parcels, dynamically generating enhanced landcover classes without heavy calculations.
+    """
+
+    def __init__(self, bbox, country_code):
+        if duckdb is None:
+            raise ModuleNotFoundError(
+                "duckdb is required for OvertureMapLandcoverForBiodiversity. Install zzproxies[data]."
+            )
+        self.bbox = bbox
+        self.country_code = country_code
+        self.release = self._get_latest_release()
+        self.con = duckdb.connect(':memory:')
+        self.con.execute("INSTALL spatial; LOAD spatial; INSTALL httpfs; LOAD httpfs;")
+
+        # --- ECOLOGICAL RECLASSIFICATION & YARD RATIOS ---
+        self.LANDCOVER_MAP = {
+            "Vegetation_High": {"keywords": ["forest", "wood", "nature_reserve", "tree_canopy"], "weight": 1.0, "is_urban": False},
+            "Vegetation_Low": {"keywords": ["grass", "meadow", "park", "garden", "pitch"], "weight": 0.7, "is_urban": False},
+            "Wetland": {"keywords": ["wetland", "bog", "marsh", "swamp"], "weight": 1.0, "is_urban": False},
+            "Water": {"keywords": ["water", "lake", "river", "pond"], "weight": 0.9, "is_urban": False},
+            "Bare_Soil": {"keywords": ["sand", "bare_rock", "beach", "heath"], "weight": 0.4, "is_urban": False},
+            "Agriculture": {"keywords": ["farmland", "farmyard", "orchard"], "weight": 0.5, "is_urban": False},
+
+            # Urban Classes: These will trigger the Yard Splitter
+            "Urban_Residential": {"keywords": ["residential"], "weight": 0.0, "is_urban": True},
+            "Urban_Commercial": {"keywords": ["commercial", "retail", "cemetery"], "weight": 0.0, "is_urban": True},
+            "Urban_Industrial": {"keywords": ["industrial", "construction", "brownfield", "parking", "highway"], "weight": 0.0, "is_urban": True},
+
+            # Explicit Classes handled outside the dynamic loop
+            "Building": {"weight": 0.0},
+            "Managed_Yard": {"weight": 0.6}, # Permeable, planted (lawns, bushes)
+            "Sealed_Yard": {"weight": 0.1}   # Impermeable (driveways, walkways, paved yards)
+        }
+
+        # If a polygon is 'Urban', how is the non-building area split?
+        # Tuple: (Fraction_Managed, Fraction_Sealed)
+        self.YARD_SPLIT_HEURISTICS = {
+            "Urban_Residential": (0.70, 0.30),  # 70% green yard, 30% paved
+            "Urban_Commercial": (0.15, 0.85),   # 15% landscaping, 85% parking/paved
+            "Urban_Industrial": (0.05, 0.95),   # 5% landscaping, 95% hardstand
+        }
+
+    def _get_latest_release(self):
+        url = "https://stac.overturemaps.org/catalog.json"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        return r.json().get("latest")
+
+    def _fetch_from_OMF(self, bbox: List[float]):
+        xmin, ymin, xmax, ymax = bbox
+
+        geom_expr = """
+            CASE
+                WHEN regexp_matches(geometry::TEXT, '^(POLYGON|MULTIPOLYGON|POINT|LINESTRING).*') THEN ST_GeomFromText(geometry::TEXT)
+                WHEN geometry::TEXT LIKE '{%"coordinates"%}' THEN ST_GeomFromGeoJSON(geometry::TEXT)
+                ELSE ST_GeomFromText('GEOMETRYCOLLECTION EMPTY')
+            END
+        """
+
+        # Uses a Point-in-Polygon (Centroid) join. Vastly faster than ST_Difference on polygons.
+        query = f"""
+            WITH bld AS (
+                SELECT
+                    id, 'building' AS raw_theme, subtype, class,
+                    {geom_expr} AS geom,
+                    ST_Area_Spheroid({geom_expr}) AS area_sqm,
+                    ST_Centroid({geom_expr}) AS centroid
+                FROM read_parquet('s3://overturemaps-us-west-2/release/{self.release}/theme=buildings/type=building/*')
+                WHERE bbox.xmin > {xmin} AND bbox.xmax < {xmax} AND bbox.ymin > {ymin} AND bbox.ymax < {ymax}
+            ),
+            lu AS (
+                SELECT
+                    id, 'land_use' AS raw_theme, subtype, class,
+                    {geom_expr} AS geom,
+                    ST_Area_Spheroid({geom_expr}) AS area_sqm
+                FROM read_parquet('s3://overturemaps-us-west-2/release/{self.release}/theme=base/type=land_use/*')
+                WHERE bbox.xmin > {xmin} AND bbox.xmax < {xmax} AND bbox.ymin > {ymin} AND bbox.ymax < {ymax}
+            ),
+            wat AS (
+                SELECT
+                    id, 'water' AS raw_theme, subtype, class,
+                    {geom_expr} AS geom,
+                    ST_Area_Spheroid({geom_expr}) AS area_sqm
+                FROM read_parquet('s3://overturemaps-us-west-2/release/{self.release}/theme=base/type=water/*')
+                WHERE bbox.xmin > {xmin} AND bbox.xmax < {xmax} AND bbox.ymin > {ymin} AND bbox.ymax < {ymax}
+            ),
+            -- FAST SPATIAL JOIN: Sum building area per land_use parcel based on building centroid
+            bld_in_lu AS (
+                SELECT lu.id AS lu_id, SUM(b.area_sqm) AS contained_bld_area
+                FROM bld b
+                JOIN lu ON ST_Intersects(b.centroid, lu.geom)
+                GROUP BY lu.id
+            )
+
+            -- 1. Output Buildings
+            SELECT id, raw_theme, subtype, class, area_sqm, 0.0 AS contained_bld_area, ST_AsText(geom) AS wkt FROM bld
+            UNION ALL
+            -- 2. Output Water
+            SELECT id, raw_theme, subtype, class, area_sqm, 0.0 AS contained_bld_area, ST_AsText(geom) AS wkt FROM wat
+            UNION ALL
+            -- 3. Output Land Use with aggregated building footprint area
+            SELECT
+                lu.id, lu.raw_theme, lu.subtype, lu.class, lu.area_sqm,
+                COALESCE(bil.contained_bld_area, 0.0) AS contained_bld_area,
+                ST_AsText(lu.geom) AS wkt
+            FROM lu
+            LEFT JOIN bld_in_lu bil ON lu.id = bil.lu_id
+            WHERE lu.area_sqm > 0
+            """.replace("{self.release}", self.release).replace("{xmin}", str(xmin)).replace("{xmax}", str(xmax)).replace("{ymin}", str(ymin)).replace("{ymax}", str(ymax))
+
+        return self.con.execute(query).fetchdf().to_dict('records')
+
+    def _reclassify_to_upd(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Refines raw map elements into biodiversity metrics.
+        Returns a LIST of records, because one Urban Land Use parcel might
+        split into multiple yard segments.
+        """
+        raw_theme = str(record.get("raw_theme", ""))
+        subtype = str(record.get("subtype", "")).lower()
+        b_class = str(record.get("class", "")).lower()
+        total_area = record.get("area_sqm", 0)
+
+        # Output container
+        derived_records = []
+        base_record = {
+            "id": record.get("id"),
+            "raw_overture_theme": raw_theme,
+            "raw_subtype": subtype,
+            "wkt": record.get("wkt")  # The parent geometry acts as the container
+        }
+
+        # --- 1. BUILDINGS & WATER (Pass-through) ---
+        if raw_theme == "building":
+            derived_records.append({**base_record, "landcover_class": "Building", "ecological_weight": self.LANDCOVER_MAP["Building"]["weight"], "area_sqm": round(total_area, 2), "ecological_area_sqm": 0.0})
+            return derived_records
+
+        elif raw_theme == "water":
+            derived_records.append({**base_record, "landcover_class": "Water", "ecological_weight": self.LANDCOVER_MAP["Water"]["weight"], "area_sqm": round(total_area, 2), "ecological_area_sqm": round(total_area * self.LANDCOVER_MAP["Water"]["weight"], 2)})
+            return derived_records
+
+        # --- 2. LAND USE ---
+        # Match class
+        derived_lc_class = "Unclassified_Land"
+        is_urban = False
+        eco_weight = 0.2
+        search_string = f"{subtype} {b_class}"
+
+        for lc_key, lc_data in self.LANDCOVER_MAP.items():
+            if "keywords" in lc_data and any(kw in search_string for kw in lc_data["keywords"]):
+                derived_lc_class = lc_key
+                eco_weight = lc_data["weight"]
+                is_urban = lc_data.get("is_urban", False)
+                break
+
+        # Calculate Net Area (subtracting buildings)
+        bld_area = record.get("contained_bld_area", 0)
+        net_area = max(0.0, total_area - bld_area)
+
+        if net_area <= 0:
+            return derived_records # Parcel is entirely covered by buildings
+
+        # --- 3. YARD SPLITTER LOGIC ---
+        if is_urban and derived_lc_class in self.YARD_SPLIT_HEURISTICS:
+            managed_ratio, sealed_ratio = self.YARD_SPLIT_HEURISTICS[derived_lc_class]
+
+            # Managed Yard
+            managed_area = net_area * managed_ratio
+            if managed_area > 0:
+                managed_w = self.LANDCOVER_MAP["Managed_Yard"]["weight"]
+                derived_records.append({**base_record, "landcover_class": "Managed_Yard", "ecological_weight": managed_w, "area_sqm": round(managed_area, 2), "ecological_area_sqm": round(managed_area * managed_w, 2)})
+
+            # Sealed Yard
+            sealed_area = net_area * sealed_ratio
+            if sealed_area > 0:
+                sealed_w = self.LANDCOVER_MAP["Sealed_Yard"]["weight"]
+                derived_records.append({**base_record, "landcover_class": "Sealed_Yard", "ecological_weight": sealed_w, "area_sqm": round(sealed_area, 2), "ecological_area_sqm": round(sealed_area * sealed_w, 2)})
+
+        else:
+            # Natural/Non-Urban land uses just get their base net area
+            derived_records.append({**base_record, "landcover_class": derived_lc_class, "ecological_weight": eco_weight, "area_sqm": round(net_area, 2), "ecological_area_sqm": round(net_area * eco_weight, 2)})
+
+        return derived_records
+
+    def run(self):
+        raw_data = self._fetch_from_OMF(bbox=self.bbox)
+        refined_data = []
+
+        for r in raw_data:
+            # _reclassify_to_upd now returns a list of dictionaries
+            converted_list = self._reclassify_to_upd(r)
+            refined_data.extend(converted_list)
+
         return refined_data
 
 # ----- Next Blueprint below here.. -----

@@ -1,7 +1,7 @@
 """
 src/zzproxies/models.py
 Verification Models: Impact calculation for Impact-Verified Zoning.
-Linked to OvertureMapBuildingsWithPlaces blueprint.
+Linked to blueprints.py
 """
 
 from .core import registry, ProxyStatus, CoverageLimit, REGIONS
@@ -27,6 +27,58 @@ GWP_BENCHMARKS = {
         "Transport": 12.0,
     }
 }
+
+BIODIVERSITY_WEIGHTS = {
+    "Vegetation_High": 1.0,
+    "Vegetation_Low": 0.7,
+    "Wetland": 1.0,
+    "Water": 0.9,
+    "Bare_Soil": 0.35,
+    "Agriculture": 0.55,
+    "Managed_Yard": 0.6,
+    "Sealed_Yard": 0.1,
+    "Building": 0.0,
+    "Unclassified_Land": 0.2,
+    "Unknown": 0.2,
+}
+
+BIODIVERSITY_GWPL_LEVELS = [
+    (0.80, "L0: High Biodiversity Support"),
+    (0.65, "L1: Strong Urban Habitat"),
+    (0.45, "L2: Transitional Habitat"),
+    (0.25, "L3: Fragmented Habitat"),
+    (0.00, "L4: Critical Biodiversity Pressure"),
+]
+
+
+def _coerce_float(value: Any) -> float:
+    if value is None or str(value).lower() == "null":
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_mapping(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.lower() != "null":
+        import json
+
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _biodiversity_label(score: float) -> str:
+    for threshold, label in BIODIVERSITY_GWPL_LEVELS:
+        if score >= threshold:
+            return label
+    return BIODIVERSITY_GWPL_LEVELS[-1][1]
 
 # --- 1. Upfront GWP (Supply-Side) ---
 
@@ -160,6 +212,7 @@ def activity_pcf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         )
     )
 )
+
 def slf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Dynamically maps GWPL based on consumption intensity of NFA_by_industry 
@@ -230,3 +283,86 @@ def slf_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
 
     return data
+
+# --- 4. Landcover Biodiversity (experimental) ---
+
+@registry.register(
+    name="biodiv_proxy",
+    required_blueprint="OvertureMapLandcoverForBiodiversity",
+    status=ProxyStatus(
+        name="Landcover Biodiversity Proxy",
+        version="1.0.0",
+        state="experimental",
+        description="Converts landcover composition into an ecological support score and GWPL label.",
+        coverage=CoverageLimit(
+            allowed_regions=REGIONS["NORDICS"],
+            data_source="Overture Landuse and Buildings",
+            validation_note="Statistically found rebound factors based on ..."
+        )
+    )
+)
+
+def biodiv_proxy(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Bridges landcover composition into an urban biodiversity support score.
+
+    Accepts either the aggregated landcover composition format or the
+    row-level output emitted by OvertureMapLandcoverForBiodiversity.
+    """
+    grouped: Dict[str, Dict[str, Any]] = {}
+
+    for index, record in enumerate(data):
+        group_id = record.get("id") or record.get("parent_id") or f"row-{index}"
+        bucket = grouped.setdefault(
+            group_id,
+            {
+                "source_record": record,
+                "landcover_composition": {},
+                "total_area": 0.0,
+                "ecological_area": 0.0,
+            },
+        )
+
+        raw_landcover = _coerce_mapping(record.get("landcover_composition"))
+        if raw_landcover:
+            for lc_type, area in raw_landcover.items():
+                lc_name = str(lc_type)
+                lc_area = _coerce_float(area)
+                weight = BIODIVERSITY_WEIGHTS.get(lc_name, BIODIVERSITY_WEIGHTS["Unknown"])
+                bucket["landcover_composition"][lc_name] = bucket["landcover_composition"].get(lc_name, 0.0) + lc_area
+                bucket["total_area"] += lc_area
+                bucket["ecological_area"] += lc_area * weight
+            continue
+
+        landcover_class = record.get("landcover_class")
+        if landcover_class is not None:
+            lc_name = str(landcover_class)
+            area_sqm = _coerce_float(record.get("area_sqm"))
+            ecological_area_sqm = _coerce_float(record.get("ecological_area_sqm"))
+            weight = BIODIVERSITY_WEIGHTS.get(lc_name, BIODIVERSITY_WEIGHTS["Unknown"])
+
+            if area_sqm <= 0.0 and ecological_area_sqm > 0.0 and weight > 0.0:
+                area_sqm = ecological_area_sqm / weight
+            if ecological_area_sqm <= 0.0:
+                ecological_area_sqm = area_sqm * weight
+
+            bucket["landcover_composition"][lc_name] = bucket["landcover_composition"].get(lc_name, 0.0) + area_sqm
+            bucket["total_area"] += area_sqm
+            bucket["ecological_area"] += ecological_area_sqm
+
+    results: List[Dict[str, Any]] = []
+    for bucket in grouped.values():
+        total_area = bucket["total_area"]
+        ecological_area = bucket["ecological_area"]
+        biodiversity_index = (ecological_area / total_area) if total_area > 0 else 0.0
+        record = dict(bucket["source_record"])
+        record.update({
+            "landcover_composition": bucket["landcover_composition"],
+            "proxy_value": round(ecological_area, 2),
+            "proxy_unit": "ecological_area_sqm",
+            "biodiversity_index": round(biodiversity_index, 3),
+            "GWPL": _biodiversity_label(biodiversity_index),
+        })
+        results.append(record)
+
+    return results

@@ -4,7 +4,13 @@ An all-in-one package for Discovery-to-Verification Urban Research for Land-use 
 """
 
 from .core import registry, ProxyStatus, CoverageLimit, REGIONS
-from . import blueprints, models, reports
+from . import models, reports
+
+try:
+    from . import blueprints
+except ModuleNotFoundError:
+    blueprints = None
+
 from .reports import UrbanImpactReport, compare_reports
 
 __all__ = [
