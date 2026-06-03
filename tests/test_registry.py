@@ -5,7 +5,7 @@ Ensures that every proxy is linked, contextually limited, and documented.
 """
 import os
 import pytest
-from scr.zzproxies import registry, blueprints
+from zzproxies import registry, blueprints
 
 # Define the path to the documentation folder for visibility checks
 DOCS_PATH = os.path.join(os.path.dirname(__file__), "../docs")
@@ -15,6 +15,9 @@ def test_proxy_blueprint_linkage():
     Validation: Every registered proxy must point to an 
     existing Blueprint Class in blueprints.py.
     """
+    if blueprints is None:
+        pytest.skip("duckdb is not installed, so blueprint linkage cannot be checked in this environment.")
+
     for name, metadata in registry._metadata.items():
         blueprint_name = metadata["blueprint_name"]
         
@@ -67,6 +70,9 @@ def test_pipeline_dry_run():
     Execution: Verifies the registry can instantiate a blueprint 
     and pass data to the proxy.
     """
+    if blueprints is None:
+        pytest.skip("duckdb is not installed, so pipeline execution cannot be checked in this environment.")
+
     # Mock parameters
     mock_bbox = [24.9, 60.1, 25.0, 60.2]
     mock_cc = "FI"
